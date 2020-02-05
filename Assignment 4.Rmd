@@ -1,0 +1,509 @@
+---
+title: "Homework 4"
+author: "Martina Rosen and Ashwini Patil"
+date: "12/2/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, 
+                      cache=TRUE, 
+                      fig.align='center')
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+indent1 = '    '      
+indent2 = paste(rep(indent1, 2), collapse='')
+```
+
+
+
+----------------------
+
+In this homework, the problems will be more computationally intensive than previous problems in this class.  You should expect the code for some problems  to take a couple of minutes to complete.  Re-knitting your file can take a long time so you should consider using `cache=TRUE` option in R chunks that involve code which takes a while to run.  Another option would be to work some of the more computationally demanding problems in separate Rmd. Please load the following packagesfor this homework:  
+
+```{r pkg, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tree)
+library(randomForest)
+install.packages("gbm")
+library(gbm)
+library(ROCR)
+library(e1071)
+library(imager)
+```
+# 1. Fundamentals of the bootstrap
+
+In the first part of this problem we will explore the fact that approximately 1/3 of the observations in a bootstrap sample are _out-of-bag_.  
+
+##a) 
+**Given a sample of size $n$, what is the probability that any observation $j$ is _not_ in in a bootstrap sample? Express your answer as a function of $n$.**
+
+$\\$
+Suppose original sample size is $n$,
+$\\$
+We are to sample *with replacement* $n$ obsevations from original sample,
+$\\$
+Probability observation $j$ is not selected on a given draw is $\frac {n-1}{n},$
+$\\$
+and,
+$\\$
+probability observation $j$ is not selected on any of the $n$ draws is $(\frac{n-1}{n})^{n}$
+$\\$
+
+##b)
+**Compute the above probability for $n=1000$.**
+
+
+$\\$
+Let X be a sample of 1000 observations generated from an original sample of 1000 observations. Then,
+$\\$
+$\mathbb{P}[j \notin X]$ = $(\frac{999}{1000})^{1000}$ = 36.77%.
+$\\$
+
+c) Verify that your calculation is reasonable by resampling the numbers 1 to 1000 with replace and printing the number of missing observations.  Hint: use the `unique` and `length` functions to identify how many unique observations are in the sample.  
+```{r}
+set.seed(3)
+samp <- 1:1000
+samp1 <- sample(samp, size = 1000, replace = TRUE)
+
+#The probability that an observation is not in a single sample is 
+(1000-length(unique(samp1)))/1000
+
+#The difference of 0.0047 between our empirical and theoretical result is less than 1.3% of the theoretical result, and so we determine that it is due to sampling error.
+```
+
+Here we'll use the bootstrap to compute uncertainty about a parameter of interest.
+
+d)  By November 19, 2015, Stephen Curry, an NBA basketball player regarded as one of the best players currently in the game, had made 62 out of 126 three point shot attempts (49.2\%).  His three point field goal percentage of 0.492, if he maintains it, will be one of the best all time for a single season.  Use bootstrap resampling on a sequence of 62 1's (makes) and 64 0's (misses).  For each bootstrap sample compute and save the sample mean (e.g. bootstrap FG% for the player).  Use 1000 bootstrap samples to plot a histogram of those values.  Compute the 95% bootstrap confidence interval for Stephen Curry's "true" end-of-season FG% using the `quantile` function in R.  Print the endpoints of this interval.  However, this estimate, and the associated uncertainty, exclude information about his career performance as well as the typical shooting skill for other players in the league.  For reference, prior to this year, Stephen Curry had made about 43% of all three point shots in his career.  Despite the fact that the bootstrap histogram shows that it is about equally likely that Curry's true skill is greater or elss than 0.492, why do you expect that his end-of-season field goal percentage will in fact be lower than his percentage on 11/19? _Hint:_ look up the phenomenon known as "regression to the mean". 
+
+```{r}
+mm <- c(rep(0, each = 64), rep(1, each = 62))
+Make <- vector()
+for (i in 1:1000){
+samp <- sample(mm, size = 126, replace = TRUE)
+made <- sum(samp)
+Make[i] <- made/126
+}
+hist(Make)
+
+#If we are to assume an unknown distribution, a 95% confidence interval for the median may be constructed by 
+#Lower Bound = median - 1.96*sqrt(median*2)/2
+#Upper Bound = 1 + median + 1.96*sqrt(median*2)/2
+
+n <- median(Make)*126*2
+
+#Lower Bound
+(median(Make)*126-1.96*sqrt(n)/2)/126
+#Upper Bound
+(1+median(Make)*126+1.96*sqrt(n)/2)/126
+
+#By CLT and the historgram we assume normal distribution, hence 95% CI for population mean is bounded by mean +/- 1.96*StDev
+#However, the problem specifies to use the quantile function, which indicates that the median is wanted, rather than the mean, to represent the "true"average FG%.
+
+std <- sqrt(var(Make))
+lb <- quantile(Make, 0.5)-1.96*std
+ub <- quantile(Make, 0.5)+1.96*std
+
+#We are 95% confidence the true average is between 
+lb
+#and
+ub
+
+#Both solutions for the confidence intervals are nearly the same, so we are satisfied with either. 
+```
+*Given that the score of 49.x% would be record setting, and given that his previous year was nearly 8% lower we have reason to believe his true mean lies somewhere in the middle.*
+
+# 2. Eigenfaces
+
+In this problem we will use PCA to explore variation in images of faces.  Load the data saved in `faces_array.RData` with the `load` function.  This will load a 100 x 100 x 1000 _array_ of data.  An array is a generalization of a matrix to more than 2 dimensions.  In this example, the first two dimensions index the pixels in a 100 x 100 black and white image of a face.  The last dimension is the index for one of 1000 face images.  The faces used in this example are from 1000 images scraped from the internet. See  \url{https://cyberextruder.com/face-matching-data-set-download/} for more info.  
+
+
+```{r}
+load("faces_array.RData")
+```
+
+Although it is natural to think about an stack of 1000 matrices representing each of the face images, to run PCA we need to input a single matrix.  To do this, we'll convert each 100 x 100 matrix to a single vector of length 100*100 = 10000. When you call `as.numeric` on a matrix, it stacks each of the columns in the matrix into one large vector.  Thus, we can think of our data as 1000 observations of a 10000 variables  (one variable per pixel).  Run the following code to get a matrix of face observations.
+
+```{r}
+face_mat <- sapply(1:1000, function(i) as.numeric(faces_array[, , i]))  %>% t
+```
+
+When we want to visualization an image, we need to take the 10000 dimensional vector and reconstruct it as a matrix. The code `plot_face` takes a single 10000 dimensional vector (e.g. a column of `face_mat`), converts it back to a matrix, and plots the resulting image.  You can test this functionality by printing a random face from the dataset: `plot_face(face_mat[sample(1000, 1), ])`.
+
+```{r}
+plot_face <- function(image_vector) {
+  plot(as.cimg(t(matrix(image_vector, ncol=100))), axes=FALSE, asp=1)
+}
+  
+```
+
+a) Find the "average" face in this dataset by averaging all of the columns in `face_mat`.  Plot the average face by calling `plot_face` on the average. 
+
+```{r}
+sum_face = matrix(0, 1,10000)
+for(i in 1:1000){
+  sum_face = sum_face + face_mat[i,]
+}
+average_face <- sum_face/1000
+plot_face(average_face)
+```
+
+b) Run PCA on `face_mat` setting `center=TRUE` and `scale=FALSE`.  In class we mentioned that in general it is best if `scale=TRUE` because it puts all variables on the same scale and we don't have to worry about the units of the variables (remember, the scale of the variables affects our results). In general, this is good practice, especially when the predictor variables are of mixed types.  Here, each variable represents a single pixel intensity (in black & white) and so all variables already have the same units and same scale (minimum of 0 and maximum of 255).  In this case, setting `scale=FALSE` actually seems to give slightly better results. Plot the PVE and cumulative PVE from the PCA.  How many PCs do you need to explain at least 50% of the total variation in the face images?
+
+```{r}
+pr.out=prcomp(face_mat, center=TRUE, scale=FALSE)
+pr.var=pr.out$sdev ^2
+pve=pr.var/sum(pr.var)
+cumulative_pve <- cumsum(pve)
+```
+
+```{r, eval=FALSE}
+# This will put the next two plots side by side  
+par(mfrow=c(1, 2))
+# Plot proportion of variance explained
+plot(pve, type="l", lwd=3, xlab="Principal Component",
+     ylab="PVE", ylim =c(0,1))
+plot(cumulative_pve, type="l", lwd=3, xlab="Principal Component ",
+     ylab=" Cumulative PVE ", ylim=c(0,1))
+```
+*You need 5 PCs to explain atleast 50% of the total variation in face images.*
+
+c) Plot the first 16 principle component directions as faces using the `plot_face` function (these are the columns of the `rotation` matrix). Early researchers termed these "eigenfaces" since they are eigenvectors of the matrix of faces.  The code below will adjust the margins of you plot and specifies a layout for the 16 images.  `par(mfrow=c(4,4))` specifies a grid of 4 x 4 images.  Each time you call `plot_face` it will plot the next face in one of the new grid cells.  All you need to do is call `plot_face` 16 times (please use a `for` loop).  Note that these images describe "directions" of maximum variability in the face images.  You should interpret light and dark regions in the eigenfaces as regions of high _contrast_, e.g. your interpretation should not change if you inverted black and white in the images.
+
+```{r, fig.height=10, fig.width=10}
+par(mfrow=c(4, 4))
+for(i in 1:16){
+  plot_face(pr.out$rotation[, i])
+}
+```
+
+d) In this part, we will examine faces that have the highest and lowest values for specific PCs. Plot the faces with the 5 largest values on PC1 and the 5 smallest values for PC1.  Based on the example faces, and the first eigenface from the previous part and the 10 example images, what aspect of variability in the face images is captured by the first component.
+
+```{r, fig.height=10, fig.width=10}
+pc1_values <- order(pr.out$x[,1], decreasing = FALSE)
+bottom_values <- pc1_values[0:5]
+top_values <- tail(pc1_values, 5)
+par(mfrow=c(2, 5))
+
+# Smallest Values
+for(j in bottom_values){
+  plot_face(face_mat[j,])
+}
+
+# Largest Values
+for(j in top_values){
+  plot_face(face_mat[j,])
+}
+```
+*Based on the example faces, it seems that the first principal component captures the contrast between the face and the background. Faces on darker backgrounds are seen for lower values of PC1 and faces on lighter backgrounds are seen for higher values of PC1.*
+
+e) Repeat part d) but now display example faces with the largest and smallest values on principal component 5.  Again, discuss what aspect of variability in the face images is best captured by this principal component.  Based on your results, which principal component, (1 or 5) would be more useful as a feature in a face recognition model (e.g. a model which predicts the identity of the individual in an image)
+
+```{r, fig.height=10, fig.width=10}
+pc5_values <- order(pr.out$x[,5], decreasing = FALSE)
+bottom_values5 <- pc5_values[0:5]
+top_values5 <- tail(pc5_values, 5)
+par(mfrow=c(2, 5))
+
+# Smallest Values
+for(j in bottom_values5){
+  plot_face(face_mat[j,])
+}
+
+# Largest Values
+for(j in top_values5){
+  plot_face(face_mat[j,])
+}
+```
+*Based on the results, it would seem that the 5th Principal Component captures the length of hair on the face. For lower values of PC5, we see pictures with darker frames around the face and for higher values of PC5 we see faces with longer hair.*
+*It would seem that PC5 better helps us predict the identity of the individual because length of hair can help us predict gender to a certain extent, as opposed to image background from PC1 which wouldn't help as much.*
+
+f) (__231 only__) In this example we will demonstrate how we can use PCA for image compression.  Pick any face image from the dataset. We can "compress" the image by expressing the image as a linear combination of a smaller number of eigenfaces.  In class we mentioned that PCA is closely related to the singular value decomposition (SVD) of a matrix.  Using the SVD, on the centered original image vector, $\mathbf{x}$ (the $1000 \times 10000$ matrix), we can express $\mathbf{x} = UDV^T = \mathbf{z}V^T$, where here $V$ is the matrix of eigenvectors (the eigenfaces from the part c, e.g. `rotation` returned by `prcomp`) and D is the standard deviation of the principal components (`sdev` returned by `prcomp`).   Together, $\mathbf{z} = UD$ are the coordinates of the princpal components in the rotated space (`prcomp$x`).  We can come up with a "low rank" approximation to $\mathbf{x}$ by throwing away the lower variance components.  Specifically, we can approximate the original vector by using only the first $k$ columns of $V$ and the first $k$ columns of $z$: $\tilde x =  \mathbf{z}^{1:k}{V^{1:k}}^T$.  Compute the compressed representations of the face of your choosing, $\tilde x$ for values of $k \in \{10, 50, 100, 300\}$. Note that you should add the "average face", $\mu$ from part a) back onto $\tilde x$ before plotting, since the $x$ has been centered.  Plot the 4 compressed face images, $\tilde x + \mu$ as well as the original image in a single row by specifying `par(mfrow=c(1, 5))` prior to each call of `plot_face`.  
+
+```{r, fig.height=10, fig.width=10}
+face <- face_mat[1,]
+z <- pr.out$x
+par(mfrow=c(1, 5))
+for(i in c(10, 50, 100, 300)){
+  V <- pr.out$rotation
+  new_x <- z[1,1:i] %*% t(V[,1:i]) + average_face
+  plot_face(new_x)
+}
+# Original face
+plot_face(face)
+```
+
+## 3. Logistic regression with polynomial features
+
+a) In class, we have used polynomial linear regression several times as an example for model complexity and the bias variance tradeoff.  We can also introduce polynomial logistic regression models to derive more sophisticated classification functions by introducing additional features. Use `read_csv` to load `nonlinear.csv` and plot the data. Plot each point colored according to its class, `Y`.
+
+```{r}
+dat <- read_csv("nonlinear.csv")
+plot(X2~X1, dat,col = ifelse(dat$Y ==0,3,4))
+nrow(dat)
+```
+
+
+b) Fit a logistic regression model of `Y` on `X1` and `X2`. The decision boundary can be visualized by making predictions of class labels over finely sampled grid
+    points that cover your region (sample space) of interest. The following code
+    will create grid points over the sample space as below:
+    For each point in `gr`, predict a class label using the logistic regression model.  You should classify based on the probability being greater or less than 1/2.  Visualize your predictions at each point on the grid using the `geom_raster` function.  This function colors in rectangles on the defined grid and is a good way to visualize your decision boundary.  Set the `fill` aesthetic to your predicted label and outside of the `aes` use `alpha=0.5` to set the transparency of your predictions.  Plot the observed data, colored by label, over the predictions using `geom_point`.  
+
+
+```{r indent=indent1, echo=TRUE, out.width='50%'}
+# grid of points over sample space
+gr <- expand.grid(X1=seq(-5, 5, by=0.1),  # sample points in X1
+                 X2=seq(-5, 5, by=0.1))  # sample points in X2
+glmDAT <- glm(Y~X1+X2, data =dat, family = binomial)
+preDAT <- predict(glmDAT, gr, type = "response")
+lineDAT <- as.factor(ifelse(preDAT<=0.5,0,1))
+ggplot(gr, aes(gr$X1, gr$X2))+geom_raster(aes(fill=lineDAT), alpha=0.5)+geom_point(aes
+      (dat$X1,dat$X2), data = dat,col = ifelse(dat$Y ==0,"hotpink",4))
+```
+
+c) Fit a model involving 2nd degree polynomial of `X1` and `X2` with interaction terms. You should use the `poly()` function.  Inspect result of the fit using `summary()`. Plot the resulting decision boundary. 
+
+```{r}
+glmDAT2 <- glm(Y~ poly(X1,X2, degree =2), data = dat, family = binomial)
+preDAT2 <- predict(glmDAT2, gr, type = "response")
+lineDAT2 <- as.factor(ifelse(preDAT2<=0.5,0,1))
+ggplot(gr, aes(gr$X1, gr$X2))+geom_raster(aes(fill=lineDAT2), alpha=0.5) + geom_point(aes(dat$X1,dat$X2), data = dat,col = ifelse(dat$Y ==0,"hotpink",4))
+summary(glmDAT2)
+
+```
+        
+
+d) Using the same procedure, fit a logistic regression model with 5-th degree polynomials without any interaction terms. Inspect result of the fit using `summary()`.  Plot the resulting decision boundary and discuss the result. Explain the reason for any strange behvaior. 
+```{r}
+glmDAT3 <- glm(Y~ poly(X1,X2, degree =5), data = dat, family = binomial)
+preDAT3 <- predict(glmDAT3, gr, type = "response")
+lineDAT3 <- as.factor(ifelse(preDAT3<=0.5,0,1))
+ggplot(gr, aes(gr$X1, gr$X2))+geom_raster(aes(fill=lineDAT3), alpha=0.5) + geom_point(aes(dat$X1,dat$X2), data = dat,col = ifelse(dat$Y ==0,"hotpink",4))
+summary(glmDAT3)
+```
+*This model responds to noise as thought it's signal, and conforms it's shape to satisfy the highly idiosyncratic behavior of randomness. The plot hugs the blue points closely, and fills in the rest with pink, even though there are no pink points in the viscinity. It is therefor too sensitive to the blue points, because it is responding to every piece of information that it has, rather than leaving unknowns as unknowns.*
+
+
+e) Qualitatively, compare the relative magnitudes of
+      coefficients of in the two polynomial models and the linear model. What do you
+        notice? Your answer should mention bias, variance and/or overfitting.
+```{r}
+cbind(summary(glmDAT3)$coef[,1])
+cbind(summary(glmDAT2)$coef[,1])
+```
+*The magnitude of each coefficient in the 2 degree polynomial model is much larger than the corresponding coefficient in the 5 degree polynomial model, which indicates that each attribute in the lower degree model is more impactful than any attribute in the higher degree model. This implies that the higher degree model overfits to the sample data, which implies that fresh data from the population will have greater variance from the 5 degree model than the 2 degree model. The benefit of that overfitting is that the higher degree model theoretically offers lower bias, however whether that is a material difference remains to be seen. The 2 degree model seems to be an excellent fit so far.*
+
+f) (__231 required, 131 extra credit__)  Create 3 bootstrap replicates of the original dataset.  Fit the linear model and the 5th order polynomial to each of the bootstrap replicates.  Plot class predictions on the grid of values for each of both linear and 5th order fits, from each of the bootstrap samples.  There should be six plots total.  Discuss what you see in the context of your answer to the previous question. 
+
+```{r, message=FALSE}
+set.seed(1)
+sampDAT <- NULL
+
+sampDAT <-  sample_n(dat, 72, replace = TRUE)
+glmDAT4 <- glm(Y~ poly(X1,X2, degree =2), data = as.data.frame(sampDAT), family = binomial)
+
+
+preDAT4 <- predict(glmDAT4, gr, type = "response")
+lineDAT4 <- as.factor(ifelse(preDAT4<=0.5,0,1))
+ggplot(gr, aes(gr$X1, gr$X2))+geom_raster(aes(fill=lineDAT4), alpha=0.5) + geom_point(aes(sampDAT$X1,sampDAT$X2), data = sampDAT,col = ifelse(sampDAT$Y ==0,"hotpink",4))
+
+glmDAT5 <- glm(Y~ poly(X1,X2, degree =5), data = sampDAT, family = binomial)
+preDAT5 <- predict(glmDAT5, gr, type = "response")
+lineDAT5 <- as.factor(ifelse(preDAT5<=0.5,0,1))
+ggplot(gr, aes(gr$X1, gr$X2))+geom_raster(aes(fill=lineDAT5), alpha=0.5) + geom_point(aes(sampDAT$X1,sampDAT$X2), data = sampDAT,col = ifelse(sampDAT$Y ==0,"hotpink",4))
+
+sampDAT <-  sample_n(dat, 72, replace = TRUE)
+glmDAT4 <- glm(Y~ poly(X1,X2, degree =2), data = as.data.frame(sampDAT), family = binomial)
+
+
+preDAT4 <- predict(glmDAT4, gr, type = "response")
+lineDAT4 <- as.factor(ifelse(preDAT4<=0.5,0,1))
+ggplot(gr, aes(gr$X1, gr$X2))+geom_raster(aes(fill=lineDAT4), alpha=0.5) + geom_point(aes(sampDAT$X1,sampDAT$X2), data = sampDAT,col = ifelse(sampDAT$Y ==0,"hotpink",4))
+
+glmDAT5 <- glm(Y~ poly(X1,X2, degree =5), data = sampDAT, family = binomial)
+preDAT5 <- predict(glmDAT5, gr, type = "response")
+lineDAT5 <- as.factor(ifelse(preDAT5<=0.5,0,1))
+ggplot(gr, aes(gr$X1, gr$X2))+geom_raster(aes(fill=lineDAT5), alpha=0.5) + geom_point(aes(sampDAT$X1,sampDAT$X2), data = sampDAT,col = ifelse(sampDAT$Y ==0,"hotpink",4))
+
+sampDAT <-  sample_n(dat, 72, replace = TRUE)
+glmDAT4 <- glm(Y~ poly(X1,X2, degree =2), data = as.data.frame(sampDAT), family = binomial)
+
+
+preDAT4 <- predict(glmDAT4, gr, type = "response")
+lineDAT4 <- as.factor(ifelse(preDAT4<=0.5,0,1))
+ggplot(gr, aes(gr$X1, gr$X2))+geom_raster(aes(fill=lineDAT4), alpha=0.5) + geom_point(aes(sampDAT$X1,sampDAT$X2), data = sampDAT,col = ifelse(sampDAT$Y ==0,"hotpink",4))
+
+glmDAT5 <- glm(Y~ poly(X1,X2, degree =5), data = sampDAT, family = binomial)
+preDAT5 <- predict(glmDAT5, gr, type = "response")
+lineDAT5 <- as.factor(ifelse(preDAT5<=0.5,0,1))
+ggplot(gr, aes(gr$X1, gr$X2))+geom_raster(aes(fill=lineDAT5), alpha=0.5) + geom_point(aes(sampDAT$X1,sampDAT$X2), data = sampDAT,col = ifelse(sampDAT$Y ==0,"hotpink",4))
+
+```
+*The 5-degree models have boundaries that reflect the typical distance between blue and pink points, continuing to hug the blue points very closely, even in the absence of pink points at the other side. The shape of these models changes with each bootstrapped sample, showing very little consistency in the predictions. Hence we see the high variance that comes with overfitting, and excessive deliniation.*
+$\\$
+*On the other hand, the 2-degree models offer great consistency, each plot looks highly similar to the others, and hence we believe this model is a better fit for the population.*
+
+## 4. Predicting insurance policy purchases
+
+This question involves the use of the "Caravan" data set, which contains 5822 real customer records. Each record consists of 86 variables, containing sociodemographic data (variables 1-43) and product ownership (variables 44-86), grouped by zip code. In this problem we will focus on predicted the variable "Purchase" which indicates whether the customer purchased a caravan insurance policy. For more information see \url{http://www.liacs.nl/~putten/library/cc2000/data.html}. 
+
+a) When you load the "ISLR" library, the variable `Caravan` is automatically loaded into your environment.  Split `Carvan` into a training set consisting of the first 1000 observations and a test set consisting of the remaining observations.
+
+```{r}
+library(ISLR)
+caravan_train <- head(Caravan, 1000)
+caravan_test <- tail(Caravan, -1000)
+print(dim(caravan_train))
+print(dim(caravan_test))
+```
+
+b) Fit a boosting model to the training set with `Purchase` as the
+response and the other variables as predictors. Use the `gbm` to fit a 1,000 tree boosted model and set the shrinkage value of 0.01. Which predictors appear to be the most important (Hint: use the `summary` function)? 
+
+```{r}
+set.seed(1)
+boost.caravan = gbm(ifelse(Purchase=="Yes",1,0)~., data=caravan_train, n.trees=1000, shrinkage=0.01, distribution="bernoulli")
+summary(boost.caravan)
+```
+
+c) Now fit a random forest model to the same training set from the previous problem. Set `importance=TRUE` but use the default parameter values for all other inputs to the `randomForest` function.  Print the random forest object returned by the random forest function.  What is the out-of-bag estimate of error?  How many variables were subsampled at each split in the trees? How many trees were used to fit the data?  Look at the variable importance.  Is the order of important variables similar for both boosting and random forest models?
+
+```{r}
+set.seed(1)
+rf.caravan = randomForest(Purchase ~ ., data=caravan_train, importance=TRUE)
+rf.caravan
+```
+*The out-of-bag estimate of error is 6.1%.*
+*The number of variables subsampled at each split is 9.*
+*500 trees were used to fit the data.*
+
+```{r}
+# Looking at the importance variable
+importance(rf.caravan)
+
+varImpPlot(rf.caravan, sort=T, main="Variable Importance for rf.caravan", n.var=5)
+```
+*The order of important variables is not the same for Random Forest and Boosting models.*
+
+d) Use both models to predict the response on the test data.
+Predict that a person will make a purchase if the estimated probability
+of purchase is greater than 20 %. Print the confusion matrix for both the boosting and random forest models. In the random forest model, what fraction of the people predicted to make a purchase
+do in fact make one? Note: use the `predict` function with `type="prob"` for random forests and `type="resonpse"` for the boosting algorithm.
+
+```{r}
+# Predictions with Boosting model
+yhat.boost = predict(boost.caravan, newdata = caravan_test, n.trees=1000, type='response')
+yhat.boostprob = as.factor(ifelse(yhat.boost>=0.2, "Yes", "No"))
+
+# Confusion matrix
+boost.err = table(predicted = yhat.boostprob, true = caravan_test$Purchase)
+test.boost.err = 1 - sum(diag(boost.err))/sum(boost.err)
+test.boost.err
+```
+*Of the people predicted to make a purchase, 92.15% of them actually make the purchase.*
+
+```{r}
+# Predictions with Random Forest Model
+yhat.rf = predict(rf.caravan, newdata = caravan_test, type='prob')
+yhat.rfprob = as.factor(ifelse(yhat.rf[,"Yes"]>=0.2, "Yes", "No"))
+
+# Confusion matrix
+rf.err = table(predicted = yhat.rfprob, true = caravan_test$Purchase)
+test.rf.err = 1 - sum(diag(rf.err))/sum(rf.err)
+test.rf.err
+```
+*Of the people predicted to make a purchase, 89.62% of them actually make the purchase.*
+
+## 5. An SVMs prediction of drug use
+
+In this problem we return to an analysis of the drug use dataset.  Load the drug use data using `read_csv`:
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+drug_use <- read_csv('drug.csv', 
+                   col_names = c('ID','Age','Gender','Education','Country','Ethnicity',
+                                 'Nscore','Escore','Oscore','Ascore','Cscore','Impulsive',
+                                'SS','Alcohol','Amphet','Amyl','Benzos','Caff','Cannabis',
+                                'Choc','Coke','Crack','Ecstasy','Heroin','Ketamine','Legalh','LSD', 
+                                'Meth', 'Mushrooms', 'Nicotine', 'Semer','VSA'))
+```
+
+a) Split the data into training and test data. Use a random sample of 1500 observations for the training data and the rest as test data. Use a support vector machine to predict `recent_cannabis_use` using only the subset of predictors between `Age` and `SS` variables as on homework 3.  Unlike homework 3, do not bother mutating the features into factors.  Use a "radial" kernel and a cost of 1.  Generate and print the confusion matrix of the predictions against the test data.
+
+```{r}
+train_index <- sample(nrow(drug_use), 1500)
+
+drug_use <- drug_use %>%
+  mutate(recent_cannabis_use=factor(ifelse(Cannabis >= "CL3", "Yes", "No"),
+                                    levels=c("No", "Yes")))
+
+drug_use_train <- drug_use[train_index,]
+drug_use_test <- drug_use[-train_index, ]
+
+# SVM
+svmfit=svm(drug_use_train$recent_cannabis_use~., data=drug_use_train[c((2:13), 33)], kernel="radial", cost=1,scale=FALSE)
+drug_pred = predict(svmfit, drug_use_test[c((2:13), 33)], type='class')
+
+#Confusion Matrix
+conf.test = table(predicted=drug_pred, true=drug_use_test$recent_cannabis_use)
+conf.test
+
+```
+
+
+b) Use the `tune` function to perform cross validation over the set of cost parameters: `cost=c(0.001, 0.01, 0.1, 1,10,100)`. What is the optimal cost and corresponding cross validated training error for this model?  Print the confusion matrix for the best model.  The best model can be found in the `best.model` variable returned by `tune`.  
+
+```{r}
+drug_use_train[33]
+set.seed(1)
+tune.out=tune(svm,recent_cannabis_use~.,data=drug_use_train[c((2:13), 33)],kernel="radial",ranges=list(cost=c(0.001, 0.01, 0.1,1,5,10,100), scale = FALSE))
+summary(tune.out)
+#Optimal cost is 0.1
+#Training error for optimal cost model is 0.1826667
+
+svmDRUG=svm(recent_cannabis_use~., data=drug_use_train[c((2:13), 33)], kernel="radial", cost=0.1,scale=FALSE)
+preDRUG = predict(svmDRUG, drug_use_test[c((2:13), 33)], type='class')
+
+#Confusion Matrix
+conf.test = table(predicted=preDRUG, true=drug_use_test$recent_cannabis_use)
+conf.test
+```
+
+
+c)  (__231 only__) One drawback with the support vector machine is that the method does not explicitly output a probability or likelihood for the class labels. One way to estimate class probabilities is with the bootstrap.  Create 200 bootstrap replicates of the training data, fit the svm with the best cost parameter learned in the previous part, and predict the class labels on the _test_ data for every bootstrapped fit.  Calculate the class probability for each observation as the fraction of the bootstrap predictions assigned to each class  (out of the 200).  Use these probabilities and the true test set labels to plot an ROC curve for this SVM model.  Note: the code may take a couple of minutes to complete.
+
+```{r}
+set.seed(8)
+drug_use_test2 <- drug_use_test
+NO <- vector()
+YES <- vector()
+nrow(drug_use_train)
+for(i in 1:200){
+  train_index <- sample(nrow(drug_use_train), replace = TRUE)
+  svmDRUG=svm(recent_cannabis_use~., data=drug_use_train[train_index,c((2:13), 33)], kernel="radial",gamma=0.5,cost=0.1,scale=FALSE)
+  preDRUG = as.numeric(predict(svmDRUG, drug_use_test[c((2:13), 33)], type='class')) -1
+  conf.test = table(predicted=preDRUG+1, true=drug_use_test$recent_cannabis_use)
+  NO[i] <- format((conf.test[1,1]+conf.test[1,2])/nrow(drug_use_test), digits = 5)
+  YES[i] <- format((conf.test[2,1]+conf.test[2,2])/nrow(drug_use_test), digits = 5)
+  drug_use_test2 <- cbind(drug_use_test2, preDRUG)
+}
+#Probability of NO classification
+no <- sum(as.numeric(NO))/200
+no
+#Probability of YES classification
+yes <- sum(as.numeric(YES))/200
+yes
+
+drug_use_test2 <- rowSums(drug_use_test2[,34:233])
+probs <- drug_use_test2/200
+probs
+reals <- ifelse(drug_use_test$recent_cannabis_use == 'No', 0, 1)
+reals
+
+predDRUG <- prediction(probs, reals)
+
+perfDRUG = performance(predDRUG, measure="tpr", x.measure="fpr")
+
+plot(perfDRUG, col=2, lwd=3, main="ROC curve")
+abline(0,1)
+
+```
+

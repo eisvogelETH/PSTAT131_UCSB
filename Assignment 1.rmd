@@ -1,0 +1,336 @@
+---
+title: "Homework 1"
+author: "Leonel Carlen, Stefan Ciric"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#install.packages("tidyverse")
+library("tidyverse")
+library("ggplot2")
+```
+
+
+```{r, echo =FALSE}
+algae <- read_table2("algaeBloom.txt", col_names= c('season','size','speed','mxPH','mnO2','Cl','NO3','NH4', 'oPO4','PO4','Chla','a1','a2','a3','a4','a5','a6','a7'), na="XXXXXXX")
+glimpse(algae)
+```
+
+#Problem 1
+</b>
+##1.a
+</b>
+```{r}
+algae%>%
+  group_by(season)%>%
+  summarise(n = n())
+```
+<b>
+
+##1.b
+</b>
+```{r}
+notNA <- algae %>%
+  summarise_at(.funs=funs(sum(!is.na(.))), .vars = vars(mxPH:Chla))
+#Compute mean of each chemical
+chemMean <- algae %>%
+  summarise_at(vars(mxPH:Chla), mean, na.rm=TRUE)
+#Computer var of each chemical
+chemVar <- algae %>%
+  summarise_at(vars(mxPH:Chla), var, na.rm=TRUE)
+Names <- c("Count", "Mean", "Variance")
+cbind(Names, rbind(notNA, chemMean, chemVar))
+#The large variance of NH4, oPO4 and PO4 indicate, that the mean isn't very useful.
+```
+</b>
+
+##1.c 
+```{r}
+# Compute median of each chemical
+chemMed <- algae %>%
+  dplyr::select(mxPH:Chla) %>%
+  summarise_all(function(z) median(z, na.rm=TRUE))
+# Compute mad of each chemical
+chemMad <- algae %>%
+  summarise_at(vars(mxPH:Chla), funs(mad), na.rm = TRUE)
+rnames <- c("Med", "Mean", "Mad", "Var")
+# cbind(rnames,rbind(chemMed, chemMean, chemMad, chemVar))
+tab<-rbind(chemMed, chemMean, chemMad, chemVar)
+cbind(rnames,tab)
+
+```
+*The mean for each attribute is in general higher than the median*
+*The variance is larger than the mad.*
+*The differences indicate that the average was skewed by extremely high values. Therefore, the data is more broadly spread around the mean than around the median.*
+*The much smaller MAD vs. the Var indicates the presence of influential points, potentially outliers.*
+
+
+
+
+#2
+
+##2.a
+```{r}
+mxphPlot <- algae%>%
+  drop_na(mxPH)%>%
+  ggplot(aes(mxPH,stat(density))) +
+  geom_histogram(bins = 100) + ggtitle("Histogram of mxPH")
+mxphPlot
+```
+
+
+##2.b
+```{r}
+algae%>%
+  drop_na(mxPH)%>%
+  ggplot(aes(mxPH,stat(density))) + 
+  geom_histogram(bins = 100) + ggtitle("Histogram of mxPH") +
+  geom_density(inherit.aes = TRUE) 
+```
+
+
+##2.c
+```{r}
+a1Box <- ggplot() + geom_boxplot(data=algae, aes(y=a1, x=size)) +
+  ggtitle('A conditioned Boxplot of Algal a_1')
+a1Box
+```
+
+##2.d
+```{r}
+# Use ggplot function stat_qq() and stat_qq_line to find outliers in NO3
+outNO3 <- algae%>%
+  drop_na(NO3)%>%
+  ggplot(aes(sample = NO3)) + stat_qq()+stat_qq_line()+
+  labs(title = "QQ Plot for NO3", subtitle = "Outlier listed at bottom",
+       caption = max(algae$NO3, na.rm=TRUE))
+outNO3
+```
+*The data contains about 30 outliers. One of these outliers is a critical lever point.*
+
+```{r}
+# Find outlier in NH4
+outNO4 <- algae%>%
+  drop_na(NH4)%>%
+  ggplot(aes(sample = NH4)) + stat_qq()+stat_qq_line()+
+  labs(title = "QQ Plot", subtitle = "Outlier value listed at bottom", caption = max(algae$NH4, na.rm=TRUE), " appears to be an outlier value in attribute NH4")
+outNO4
+```
+*The data points show a systematic deviation. Seven outliers are critical leverage points*
+
+
+##2.e
+```{r}
+# Compute median of each chemical
+medNO3NH4 <- algae%>%
+  dplyr::select(NO3, NH4)%>%
+  summarise_all(function(z) median(z, na.rm=TRUE))
+# Compute mad of each chemical
+madNO3NH4 <- algae%>%
+  summarise_at(vars(NO3, NH4), funs(mad), na.rm = TRUE)
+#Compute mean of each chemical
+meanNO3NH4 <- algae%>%
+  summarise_at(vars(NO3, NH4), mean, na.rm=TRUE)
+#Computer var of each chemical
+varNO3NH4 <- algae%>%
+  summarise_at(vars(NO3, NH4), var, na.rm=TRUE)
+myTable <- rbind(medNO3NH4,meanNO3NH4, madNO3NH4,varNO3NH4)
+Stat <- c("Med", "Mean", "Mad", "Var")
+nTable <- cbind(Stat, myTable)
+nTable
+```
+*As expected, the mean is much higher than the median and the variance is much higher than the MAD, which indicates that not only is the measure of  central tendency more temperamental in the presence of outliers, but the spread appears much broader when the variance is used, than the MAD would indicate. Hence the median and MAD are again the more robust measures.*
+
+
+
+#3
+##3.a
+```{r}
+fAlgae <- filter(algae, is.na(mxPH)|is.na(mnO2)|is.na(Cl)|is.na(NO3)|is.na(NH4)|is.na(oPO4)|
+                   is.na(PO4)|is.na(Chla))
+
+cat("The number of observations that contain one or more missing values is",nrow(fAlgae), "\n")
+isNA = notNA
+for(i in 1:length(notNA))
+  isNA[[i]] = 200 - notNA[[i]]
+print("The number of missing values in each column is listed in the table below:")
+isNA
+```
+
+
+##3.b
+```{r}
+algae.del <- filter(algae, !is.na(mxPH)&!is.na(mnO2)&!is.na(Cl)&!is.na(NO3)&!is.na(NH4)
+                    &!is.na(oPO4)&!is.na(PO4)&!is.na(Chla))
+
+cat("There are",nrow(algae.del),"observations without missing values in the dataset.")
+```
+
+ 
+
+##3.c
+```{r imputation}
+algae.med <- algae%>%
+  mutate_at(.vars = vars(4:11), .funs = funs(ifelse(is.na(.), median(., na.rm = TRUE), .)))
+print("The number of observations in algae.med is")
+nrow(algae.med)
+print("The chemicals for the 48th, 62nd, and 199th rows are displayed in the table below")
+Row <- c(48, 62, 199)
+cbind(Row, rbind(algae.med[48,4:11], algae.med[62,4:11], algae.med[199,4:11]))
+```
+
+
+##3.d
+```{r}
+require(utils)
+#pairs(algae[4:11])
+x <- algae.del[4:11]
+x.cor <- cor(x)
+x.cor
+reg <- lm(algae$PO4~algae$oPO4)
+algae$PO4[28] <- predict(reg)[28]
+algae$PO4[28]
+```
+
+##3.e
+<b>
+
+*Imputation might cause us to have incorrect conclusions becuase of relying too heavily on the observed data only. Lets say that in a scenario of the algae data we have new data that is far from the prediction based on oPO4 or far from the medians of each chemical, then we will have very high test error, and a model that is too overfitted on the training data.*
+
+*In the context of Correlation Method: In Lecture 2 we learned about Survivorship Bias. Many datesets have Survivorship Bias where the data that we have is insufficient in telling us about a certain variable. In the context of the algae data, using oPO4 to impute values of PO4 might be inducing Survivorship bias because oPO4 might actually not be sufficient in predicting PO4. Leading us to have high test error again*
+        
+*In the context of the Median Method: this might lead us to the wrong conclusions by introducing alot of Bias because we are using only the observed data to impute. New data might be very far from the Median causing us to have values that have high test error.*
+   
+
+
+
+#4
+
+##4.a
+
+```{r chunkids}
+set.seed(500)
+id<-cut(1:nrow(algae.med), 5, label=FALSE) %>% sample()
+almed1 <- cbind(id, algae.med)
+```
+
+##4.b
+
+```{r 5FoldCV}
+
+  error <- data.frame("fold"=NULL, "train.error"=NULL, "val.error"=NULL)
+  dat <- almed1
+  for(i in 1:5){
+    train=(dat$id != i)
+    Xtr = dat[train,1:11] # get training set
+    Ytr = dat[train,12] # get true response values in trainig set
+    Xvl = dat[!train,1:12] # get validation set
+    Yvl = dat[!train,12] # get true response values in validation set
+    lm.a1 <- lm(a1~., data = dat[train,1:13])
+    predYtr = predict(lm.a1) # predict training values 
+    predYvl = predict(lm.a1,Xvl) # predict validation values
+    error_d<-list(i,mean((predYtr - Ytr)^2), # compute and store trainin
+               mean((predYvl - Yvl)^2)) # compute and store test er
+    error <- rbind(error, error_d)
+  }
+  
+#}
+colnames(error) <- c("Fold", "Training Error", "Test Error")
+error
+```
+*We didn't use the given function instead we used the code for a forloop*
+*We had to adjust the parameters for lm.a1 and Xvl so we could use the given function.*
+
+#5
+
+```{r real}
+alTest <- read_table2('algaeTest.txt',
+                    col_names=c('season','size','speed','mxPH','mnO2','Cl','NO3',
+                                'NH4','oPO4','PO4','Chla','a1'),
+                    na=c('XXXXXXX'))
+```
+
+##5.a
+```{r}
+tSet = algae.med[,1:11] 
+vSet = alTest[,1:11]  
+vSet2 = alTest[,12]
+
+lmAll <- lm(a1~., data = algae.med[,1:12])
+predvSet = predict(lmAll, vSet) 
+sum((predvSet-vSet2)^2)/length(predvSet)
+#MSE
+
+# The mean square error is much lower than the test errors in part 4.But this is probably due to our modification on Xvl and lm.a1.
+```
+
+
+#6
+```{r islr_install}
+library(ISLR)
+head(Wage)
+```
+
+##6.a
+```{r tidy=FALSE}
+ ExpSalary = ggplot(Wage, aes(x=age, y=wage)) 
+    ExpSalary + geom_point() + geom_smooth()+ggtitle("Wage vs Age")
+```
+*Apart from a few outliers, it seems that wages rise with age up till a peak point around 40-50 years of age and then slowly decrease again with increase in age.
+It matches our expectations.*
+
+
+##6.b
+```{r}
+modelErrors <- data.frame("Model"=NULL, "Train Error"=NULL, "Test Error"=NULL)
+nums <- rep(1:5, each = length(Wage)/5)
+id <- sample(nums)
+age <- Wage$age
+wage <- Wage$wage
+data <- data.frame("ID" = id, "AGE" = age, "WAGE" = wage)
+for (i in 1:5){
+  sumtrain = 0
+  sumtest = 0
+    inTrain = data[data[,1]!=i,2]
+    outTrain = data[data[,1]!=i,3]
+    inTest = data[!(data[,1]!=i),2:3]
+    outTest = data[!(data[1]!=i),3]
+    fit <- lm(WAGE~1, data[data[,1]!=i,2:3])
+    length(data)
+    pTrain = predict(fit)
+    pTest = predict(fit, inTest)
+    sumtrain <- sumtrain + mean((pTrain - outTrain)^2)
+    sumtest <- sumtest + mean((pTest - outTest)^2)
+}
+modelErrors <- rbind(modelErrors, list(0, sumtrain/5, sumtest/5))
+for(j in 1:10){
+  sumtrain = 0
+  sumtest = 0
+  for (i in 1:5){
+    inTrain = data[data[,1]!=i,2]
+    outTrain = data[data[,1]!=i,3]
+    inTest = data.frame(data[data[,1]!=i, 2])
+    outTest = data[!(data[1]!=i),3]
+    fit <- lm(data[data[,1]!=i, 3]~poly(data[data[,1]!=i, 2], j, raw = FALSE), data = data)
+    pTrain = predict(fit)
+    pTest = predict(fit, inTest)
+    sumtrain <- sumtrain + mean((pTrain - outTrain)^2)
+    sumtest <- sumtest + mean((pTest - outTest)^2)
+  }
+  modelErrors <- rbind(modelErrors, list(j, sumtrain/5, sumtest/5))
+}
+colnames(modelErrors) <- list("Degree", "Train Error", "Test Error")
+modelErrors
+```
+
+</b>
+##6.c
+```{r}
+plot(modelErrors$Degree, modelErrors$`Train Error`, col = 'skyblue', ylab = "Error",
+     xlab = "Degree", ylim = c(300, 2000), main = "Plotted Errors")
+points(modelErrors$Degree, modelErrors$`Test Error`, col = 'hotpink')
+```
+
+*It looks like they are all equally bad except for the intercept-only mode.*
